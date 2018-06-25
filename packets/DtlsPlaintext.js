@@ -70,8 +70,8 @@ DtlsPlaintext.readPackets = function( data ) {
 DtlsPlaintext.prototype.getBuffer = function() {
     var buffer = new Buffer( 13 + this.fragment.length );
     buffer.writeUInt8( this.type, 0, true );
-    buffer.writeUInt8( this.version.major, 1, true );
-    buffer.writeUInt8( this.version.minor, 2, true );
+    buffer.writeInt8( this.version.major, 1, true );
+    buffer.writeInt8( this.version.minor, 2, true );
     buffer.writeUInt16BE( this.epoch, 3, true );
     this.sequenceNumber.copy( buffer, 5, 0, 6 );
     buffer.writeUInt16BE( this.fragment.length, 11, true );
