@@ -32,6 +32,8 @@ var DtlsExtension = require( './packets/DtlsExtension' );
 var DtlsProtocolVersion = require( './packets/DtlsProtocolVersion' );
 var DtlsRandom = require( './packets/DtlsRandom' );
 
+var KeyContext = require( './KeyContext' );
+
 var SocketState = {
     uninitialized: 0,
     sendHello: 1,
@@ -51,7 +53,7 @@ var DtlsSocket = function( dgram, rinfo, keyContext, isServer ) {
     this.recordLayer = new DtlsRecordLayer( dgram, rinfo, this.parameters );
     this.handshakeHandler = isServer
         ? new ServerHandshakeHandler( this.parameters, this.keyContext, rinfo )
-        : new ClientHandshakeHandler( this.parameters );
+        : new ClientHandshakeHandler( this.parameters, this.keyContext );
 
     this.handshakeHandler.onSend = function( packets, callback ) {
         this.recordLayer.send( packets, callback );
@@ -68,6 +70,21 @@ DtlsSocket.connect = function( port, address, type, callback ) {
     var dgramSocket = dgram.createSocket( type );
 
     var socket = new DtlsSocket( dgramSocket, { address: address, port: port });
+    socket.renegotiate();
+
+    dgramSocket.on( 'message', socket.handle.bind( socket ) );
+
+    if( callback )
+        socket.once( 'secureConnect', callback );
+
+    return socket;
+};
+
+DtlsSocket.connectFromSocket = function( sock, port, address, key, callback ) {
+    let dgramSocket = sock;
+    let keyContext = new KeyContext( key );
+
+    let socket = new DtlsSocket( dgramSocket, { address: address, port: port }, keyContext);
     socket.renegotiate();
 
     dgramSocket.on( 'message', socket.handle.bind( socket ) );

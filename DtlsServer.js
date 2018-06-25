@@ -32,6 +32,17 @@ DtlsServer.createServer = function( options, callback ) {
     return dtlsServer;
 };
 
+DtlsServer.createServerFromSocket = function( options, callback ) {
+
+    var dgramSocket = options.socket;
+    var dtlsServer = new DtlsServer( dgramSocket, options );
+
+    if( callback )
+        dtlsServer.on( 'message', callback );
+
+    return dtlsServer;
+};
+
 DtlsServer.prototype.close = function() {
     this.dgram.close();
 };

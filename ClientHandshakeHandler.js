@@ -18,6 +18,7 @@ var DtlsServerHello = require( './packets/DtlsServerHello' );
 var DtlsCertificate = require( './packets/DtlsCertificate' );
 var DtlsServerHelloDone = require( './packets/DtlsServerHelloDone' );
 var DtlsClientKeyExchange_rsa = require( './packets/DtlsClientKeyExchange_rsa' );
+var DtlsCertificateVerify = require( './packets/DtlsCertificateVerify' );
 var DtlsPreMasterSecret = require( './packets/DtlsPreMasterSecret' );
 var DtlsChangeCipherSpec = require( './packets/DtlsChangeCipherSpec' );
 var DtlsFinished = require( './packets/DtlsFinished' );
@@ -40,6 +41,16 @@ var ClientHandshakeHandler = function( parameters, keyContext ) {
 
     this.cookie = new Buffer(0);
     this.certificate = null;
+    this.keyContext = keyContext;
+    this.messages = {
+        clientHello: null,
+        serverHello: null,
+        serverCertificate: null,
+        certificateRequest: null,
+        serverHelloDone: null,
+        clientCertificate: null,
+        clientKeyExchange: null
+    }
 
     // Handshake builder makes sure that the normal handling methods never
     // receive duplicate packets. Duplicate packets may mean that the last
@@ -72,6 +83,7 @@ ClientHandshakeHandler.prototype.process = function( message ) {
         var handler = this[ 'handle_' + handshakeName ];
         if( !handler ) {
             log.error( 'Handshake handler not found for ', handshakeName );
+            handshake = this.handshakeBuilder.next();
             continue;
         }
 
@@ -132,6 +144,18 @@ ClientHandshakeHandler.prototype.send_clientHello = function() {
             new DtlsExtension({
                 extensionType: 0x000f,
                 extensionData: new Buffer([ 1 ])
+            }),
+            new DtlsExtension({
+                extensionType: 0x000d,
+                extensionData: new Buffer([ 0,4,2,1,4,1 ])
+            }),
+            new DtlsExtension({
+                extensionType: 0x0023,
+                extensionData: new Buffer(0)
+            }),
+            new DtlsExtension({
+                extensionType: 0x000e,
+                extensionData: new Buffer([ 0,2,0,1,0 ])
             })
         ]
     });
@@ -154,6 +178,8 @@ ClientHandshakeHandler.prototype.send_clientHello = function() {
 
     var packets = this.handshakeBuilder.fragmentHandshakes( handshakes );
 
+    this.messages.clientHello = packets[0].getBuffer();
+
     this.setResponse( packets );
 };
 
@@ -162,6 +188,10 @@ ClientHandshakeHandler.prototype.handle_helloVerifyRequest = function( handshake
     this.cookie = verifyRequest.cookie;
 
     return this.send_clientHello;
+};
+
+ClientHandshakeHandler.prototype.handle_certificateRequest = function (handshake) {
+    this.messages.certificateRequest = handshake.getBuffer();
 };
 
 /**
@@ -189,6 +219,7 @@ ClientHandshakeHandler.prototype.handle_serverHello = function( handshake, messa
     if( !this.parameters.first.version )
         this.parameters.first.version = serverHello.serverVersion;
 
+    this.messages.serverHello = handshake.getBuffer();
     this.setResponse( null );
 };
 
@@ -198,6 +229,8 @@ ClientHandshakeHandler.prototype.handle_certificate = function( handshake, messa
 
     // Just grab the first ceritificate ":D"
     this.certificate = certificate.certificateList[ 0 ];
+
+    this.messages.serverCertificate = handshake.getBuffer();
 
     this.setResponse( null );
 };
@@ -216,7 +249,9 @@ ClientHandshakeHandler.prototype.handle_serverHelloDone = function( handshake, m
 
     this.newParameters.init();
 
-    return this.send_keyExchange;
+    this.messages.serverHelloDone = handshake.getBuffer();
+
+    return this.send_certificates;
 };
 
 ClientHandshakeHandler.prototype.send_keyExchange = function() {
@@ -260,6 +295,105 @@ ClientHandshakeHandler.prototype.send_keyExchange = function() {
     outgoingFragments = outgoingFragments.concat( finishedFragments );
 
     this.setResponse( outgoingFragments );
+};
+
+ClientHandshakeHandler.prototype.send_certificates = function () {
+
+    log.info('Constructing client certificates');
+
+    var certificate = new DtlsCertificate({
+        certificateList: [this.keyContext.certificate]
+    });
+
+    var certificateHandshake = this.handshakeBuilder.createHandshakes(
+        certificate).getBuffer();
+    var certificateFragments = this.handshakeBuilder.fragmentHandshakes(certificateHandshake);
+    this.newParameters.digestHandshake(certificateHandshake);
+    this.messages.clientCertificate = certificateFragments[0].getBuffer();
+    log.info('Constructing key exchange');
+
+    var publicKey = Certificate.getPublicKeyPem( this.certificate );
+    var exchangeKeys = crypto.publicEncrypt({
+        key: publicKey,
+        padding: constants.RSA_PKCS1_PADDING
+    }, this.newParameters.preMasterKey);
+
+    var keyExchange = new DtlsClientKeyExchange_rsa({
+        exchangeKeys: exchangeKeys
+    });
+
+    var keyExchangeHandshake = this.handshakeBuilder.createHandshakes(
+        keyExchange).getBuffer();
+    this.newParameters.digestHandshake(keyExchangeHandshake);
+    this.newParameters.preMasterKey = null;
+    var keyExchangeFragments = this.handshakeBuilder.fragmentHandshakes(keyExchangeHandshake);
+    this.messages.clientKeyExchange = keyExchangeFragments[0].getBuffer();
+
+    log.info('Constructing certificateVerify');
+
+    // console.log('clientHello ' + this.messages.clientHello.byteLength)
+    // console.log('serverHello ' + this.messages.serverHello.byteLength)
+    // console.log('serverCertificate ' + this.messages.serverCertificate.byteLength)
+    // console.log('certificateRequest ' + this.messages.certificateRequest.byteLength)
+    // console.log('serverHelloDone ' + this.messages.serverHelloDone.byteLength)
+    // console.log('clientCertificate ' + this.messages.clientCertificate.byteLength)
+    // console.log('clientKeyExchange ' + this.messages.clientKeyExchange.byteLength)
+
+    var handshakeMessges = Buffer.concat([this.messages.clientHello]);
+    handshakeMessges = Buffer.concat([handshakeMessges, this.messages.serverHello]);
+    handshakeMessges = Buffer.concat([handshakeMessges, this.messages.serverCertificate]);
+    handshakeMessges = Buffer.concat([handshakeMessges, this.messages.certificateRequest]);
+    handshakeMessges = Buffer.concat([handshakeMessges, this.messages.serverHelloDone]);
+    handshakeMessges = Buffer.concat([handshakeMessges, this.messages.clientCertificate]);
+    handshakeMessges = Buffer.concat([handshakeMessges, this.messages.clientKeyExchange]);
+
+    console.log(handshakeMessges.length);
+    console.log(crypto.getHashes())
+    var signer = crypto.createSign('sha256WithRSAEncryption');
+    signer.update(handshakeMessges);
+
+
+    var sign = signer.sign({key:this.keyContext.key, padding:crypto.constants.RSA_PKCS1_PADDING});
+
+    console.log(sign.byteLength);
+
+    var certificateVerify = new DtlsCertificateVerify({
+        signature: sign
+    });
+    
+    var certificateVerifyHandshake = this.handshakeBuilder.createHandshakes(
+        certificateVerify).getBuffer();
+    this.newParameters.digestHandshake(certificateVerifyHandshake);
+
+    log.info('Constructing changeCipherSpec');
+
+    var changeCipherSpec = new DtlsChangeCipherSpec({ value: 1 });
+
+    log.info('Constructing finished');
+
+    console.log(this.newParameters.version)
+    var prf_func = prf(this.newParameters.version);
+    var verifyData = prf_func(
+        this.newParameters.masterKey,
+        "client finished",
+        this.newParameters.getHandshakeDigest(),
+        12
+    );
+    var finished = new DtlsFinished({ verifyData: verifyData });
+    var finishedHandshake = this.handshakeBuilder.createHandshakes(
+        finished).getBuffer();
+    this.newParameters.digestHandshake(finishedHandshake);
+
+    var certificateVerifyFragments = this.handshakeBuilder.fragmentHandshakes(certificateVerifyHandshake);
+    var finishedFragments = this.handshakeBuilder.fragmentHandshakes(finishedHandshake);
+
+    var outgoingFragments = certificateFragments;
+    outgoingFragments = outgoingFragments.concat(keyExchangeFragments);
+    outgoingFragments = outgoingFragments.concat(certificateVerifyFragments);
+    outgoingFragments.push(changeCipherSpec);
+    outgoingFragments = outgoingFragments.concat(finishedFragments);
+
+    this.setResponse(outgoingFragments);
 };
 
 /**

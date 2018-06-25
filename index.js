@@ -17,7 +17,9 @@ logg.getLogger( 'dtls.SecurityParameters.digest' ).setLogLevel( logg.Level.WARN 
 module.exports = {
     DtlsServer: DtlsServer,
     createServer: DtlsServer.createServer,
+    createServerFromSocket: DtlsServer.createServerFromSocket,
     connect: DtlsSocket.connect,
+    connectFromSocket: DtlsSocket.connectFromSocket,
     setLogLevel: log.setLogLevel.bind( log ),
     logLevel: logLevels
 };
