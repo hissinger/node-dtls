@@ -148,6 +148,10 @@ DtlsSocket.handlers[ dtls.MessageType.changeCipherSpec ] = function( message ) {
     log.info( 'Changed Cipher Spec' );
 };
 
+DtlsSocket.handlers[ dtls.MessageType.alert ] = function( message ) {
+    log.info( 'Alert' );
+};
+
 DtlsSocket.handlers[ dtls.MessageType.applicationData ] = function( message ) {
     this.emit( 'message', message.fragment );
 };
